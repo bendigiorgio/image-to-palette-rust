@@ -202,6 +202,18 @@ fn handle_file(input_file: String, iterations: u8) -> Result<Vec<Color>, String>
     palette
 }
 
+fn handle_file_from_url(input_url: String, iterations: u8) -> Result<Vec<Color>, String> {
+    let e2str = |e| format!("{}", e);
+    let img_bytes = reqwest::blocking::get(input_url).map_err(e2str)?.bytes().map_err(e2str)?;
+    let image = image::load_from_memory(&img_bytes).unwrap();
+
+    let pixels = read_pixels(image.to_rgba8());
+    let palette = make_palette(&mut pixels.clone(), iterations).ok_or(
+        String::from("There was a problem building the palette.")
+    );
+    palette
+}
+
 fn name_from_rgb(colors: &Vec<Color>) {
     let mut palette = Vec::new();
     for color in colors {
@@ -239,13 +251,26 @@ fn main() {
         "/Users/bendigiorgio/Documents/Programming/_RUST/image-to-palette/src/test.png"
     );
     let output_file = String::from("./output.png");
+    let input_url = String::from(
+        "https://cdn.midjourney.com/d04e1165-c3a9-4983-8513-e25e2fdba946/0_0.png"
+    );
 
     let result = handle_file(input_file, 4);
     if let Err(error) = result {
         println!("{}", error);
     } else {
-        println!("Success!");
+        println!("HEX code for colors from local image");
         name_from_rgb(result.as_ref().unwrap());
         create_image(output_file, result.unwrap());
+        println!("Success!");
+    }
+
+    let result = handle_file_from_url(input_url, 4);
+    if let Err(error) = result {
+        println!("{}", error);
+    } else {
+        println!("HEX code for colors from URL");
+        name_from_rgb(result.as_ref().unwrap());
+        println!("Success!");
     }
 }
