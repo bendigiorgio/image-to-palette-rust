@@ -1,276 +1,103 @@
-use image::{ Rgba, RgbaImage, ImageBuffer };
-use image::error::ImageResult as ImageResult;
-use image::io::Reader as ImageReader;
-use hex_color::HexColor;
+mod image_tools;
+#[macro_use]
+extern crate rocket;
+use rocket::http::Status;
+use rocket::response::status;
+use rocket::serde::{ Serialize, Deserialize, json::Json };
+use rocket::fs::TempFile;
 
-#[derive(Debug, Clone, Copy)]
-pub struct Color {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-    pub a: u8,
+#[derive(Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct Url<'r> {
+    link: &'r str,
+    iterations: u8,
+}
+#[derive(Serialize)]
+struct PaletteResponse {
+    colors: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum ColorChannel {
-    R,
-    G,
-    B,
-    A,
-}
-
-impl ColorChannel {
-    pub const ALL: [ColorChannel; 4] = [Self::R, Self::G, Self::B, Self::A];
-
-    pub fn value(&self, color: &Color) -> u8 {
-        match self {
-            ColorChannel::R => color.r,
-            ColorChannel::G => color.g,
-            ColorChannel::B => color.b,
-            ColorChannel::A => color.a,
+#[post("/make_palette", data = "<url>")]
+async fn palette_from_url(
+    url: Json<Url<'_>>
+) -> Result<Json<PaletteResponse>, status::Custom<String>> {
+    let result = image_tools::handle_file_from_url(url.link.to_string(), url.iterations).await;
+    let result = match result {
+        Some(result) => result,
+        None => {
+            return Err(
+                status::Custom(Status::InternalServerError, format!("Internal Server Error"))
+            );
         }
-    }
-}
-
-impl Color {
-    pub fn from_fn<F>(f: F) -> Option<Color> where F: Fn(ColorChannel) -> Option<u8> {
-        Some(Color {
-            r: f(ColorChannel::R)?,
-            g: f(ColorChannel::G)?,
-            b: f(ColorChannel::B)?,
-            a: f(ColorChannel::A)?,
-        })
-    }
-}
-
-impl PartialEq for Color {
-    fn eq(&self, other: &Self) -> bool {
-        ColorChannel::ALL.iter().all(|channel| channel.value(self) == channel.value(other))
-    }
-}
-
-/// Returns the color channel with the highest range.
-/// IMPORTANT: Ignores alpha channel!
-fn highest_range_channel(colors: &Vec<Color>) -> Option<ColorChannel> {
-    let ranges = color_ranges(colors)?;
-    let channel: &ColorChannel = ColorChannel::ALL.iter().max_by_key(|channel|
-        channel.value(&ranges)
-    )?;
-    Some(*channel)
-}
-
-/// Returns the ranges for each color channel
-fn color_ranges(colors: &Vec<Color>) -> Option<Color> {
-    Color::from_fn(|channel|
+    };
+    if let Err(error) = result {
+        println!("{}", error);
+        return Err(status::Custom(Status::InternalServerError, format!("{}", error)));
+    } else {
+        println!("HEX code for colors from URL:");
+        let palette = image_tools::name_from_rgb(result.as_ref().unwrap());
+        println!("Success!");
         Some(
-            colors
-                .iter()
-                .map(|color| channel.value(color))
-                .max()? -
-                colors
+            Json(PaletteResponse {
+                colors: palette
                     .iter()
-                    .map(|color| channel.value(color))
-                    .min()?
+                    .map(|color| color.to_string())
+                    .collect(),
+            })
+        ).ok_or(
+            status::Custom(
+                rocket::http::Status::InternalServerError,
+                "Internal Server Error".to_string()
+            )
         )
-    )
-}
-
-/// Returns median value for a specific `ColorChannel` across `colors`.
-fn channel_median(colors: &mut Vec<Color>, channel: &ColorChannel) -> Option<u8> {
-    colors.sort_by_key(|a| channel.value(a));
-
-    let mid = colors.len() / 2;
-    if colors.len() % 2 == 0 {
-        channel_mean(&vec![colors[mid - 1], colors[mid]], channel)
-    } else {
-        Some(channel.value(colors.get(mid)?))
     }
 }
 
-/// Calculate the mean value for a specific color channel on a vector of `Color`.
-fn channel_mean(colors: &Vec<Color>, channel: &ColorChannel) -> Option<u8> {
-    let number_colors = colors.len() as u32;
-
-    if number_colors == 0 {
-        return None;
-    }
-
-    let mean = colors.iter().fold(0, |acc: u32, x| (channel.value(x) as u32) + acc) / number_colors;
-    Some(mean as u8)
-}
-
-/// Performs the median cut on a single vector (bucket) of `Color`.
-/// Returns two vectors (buckets) with the colors above and below the chosen median.
-fn median_cut(colors: &mut Vec<Color>) -> Option<(Vec<Color>, Vec<Color>)> {
-    let mut above_median = Vec::<Color>::new();
-    let mut below_median = Vec::<Color>::new();
-    let channel = highest_range_channel(&colors)?;
-    let median = channel_median(colors, &channel)?;
-
-    for color in colors {
-        if channel.value(color) > median {
-            above_median.push(*color);
-        } else {
-            below_median.push(*color);
-        }
-    }
-
-    return Some((above_median, below_median));
-}
-
-/// Perform the median cut algorithm.
-/// Returns a palette with 2^iter_count colors.
-/// https://en.wikipedia.org/wiki/Median_cut
-pub fn make_palette(bucket: &mut Vec<Color>, iter_count: u8) -> Option<Vec<Color>> {
-    if iter_count < 1 {
-        return Some(vec![Color::from_fn(|channel| channel_mean(bucket, &channel))?]);
-    }
-
-    let mut new_buckets = median_cut(bucket)?;
-    let mut result = make_palette(&mut new_buckets.0, iter_count - 1)?;
-    result.append(&mut make_palette(&mut new_buckets.1, iter_count - 1)?);
-    Some(result)
-}
-
-/// Convert from an image::RgbaImage to the local representation.
-fn read_pixels(image: RgbaImage) -> Vec<Color> {
-    let to_color = |p: Rgba<u8>| Color { r: p[0], g: p[1], b: p[2], a: p[3] };
-    let mut pixels = Vec::new();
-    pixels.extend(image.pixels().map(|p| to_color(*p)));
-    pixels
-}
-
-/// Read an image from disk. Returns the RgbaImage and its width and height.
-fn read_image(filename: String) -> ImageResult<(RgbaImage, u32, u32)> {
-    let image = ImageReader::open(&filename)?.decode()?.to_rgba8();
-    let (w, h) = (image.width(), image.height());
-    Ok((image, w, h))
-}
-
-/// Make a copy of colors, with color is replaced by the closest match in palette.
-/// Uses Pythagorean distance.
-fn _assign_colors(colors: Vec<Color>, palette: Vec<Color>) -> Vec<Color> {
-    // Skip the sqrt, we don't need it. Use u32 to prevent overflows.
-    let channel_distance = |a: u8, b: u8| ((if a < b { b - a } else { a - b }) as u32).pow(2);
-    let mut result = Vec::new();
-    result.extend(
-        colors.iter().map(
-            |c|
-                palette
-                    .iter()
-                    .min_by_key(|p|
-                        ColorChannel::ALL.iter()
-                            .map(|channel| channel_distance(channel.value(c), channel.value(p)))
-                            .sum::<u32>()
-                    )
-                    .unwrap() // Maybe we should check if the palette is empty?
-        )
+#[post("/palette_from_image?<iterations>", format = "plain", data = "<file>")]
+fn palette_from_image(file: TempFile<'_>, iterations: u8) {
+    let result = image_tools::handle_file(
+        file.path().unwrap().to_string_lossy().to_string(),
+        iterations
     );
-    result
-}
-
-/// Convert from the local representation to an image::RgbaImage.
-/// Could theoretically panic in a variety of ways.
-fn _gather_pixels(colors: Vec<Color>, width: u32, height: u32) -> RgbaImage {
-    let from_c = |c: Color| Rgba::<u8>::from([c.r, c.g, c.b, c.a]);
-    RgbaImage::from_fn(width, height, |x, y|
-        from_c(colors[usize::try_from(x + width * y).unwrap()])
-    )
-}
-
-/// The inner "main" function; wraps failure conditions.
-fn _handle_file_w_output(input_file: String, output_file: String) -> Result<(), String> {
-    let e2str = |e| format!("{}", e);
-    let (image, width, height) = read_image(input_file).map_err(e2str)?;
-    let pixels = read_pixels(image);
-    let palette = make_palette(&mut pixels.clone(), 4).ok_or(
-        String::from("There was a problem building the palette.")
-    )?;
-    println!("{} colors!", palette.len());
-    let out_image = _gather_pixels(_assign_colors(pixels, palette), width, height);
-    out_image.save(output_file).map_err(e2str)
-}
-
-//Number of colors produced is iteration^2
-fn handle_file(input_file: String, iterations: u8) -> Result<Vec<Color>, String> {
-    let e2str = |e| format!("{}", e);
-    let (image, _width, _height) = read_image(input_file).map_err(e2str)?;
-    let pixels = read_pixels(image);
-    let palette = make_palette(&mut pixels.clone(), iterations).ok_or(
-        String::from("There was a problem building the palette.")
-    );
-    palette
-}
-
-fn handle_file_from_url(input_url: String, iterations: u8) -> Result<Vec<Color>, String> {
-    let e2str = |e| format!("{}", e);
-    let img_bytes = reqwest::blocking::get(input_url).map_err(e2str)?.bytes().map_err(e2str)?;
-    let image = image::load_from_memory(&img_bytes).unwrap();
-
-    let pixels = read_pixels(image.to_rgba8());
-    let palette = make_palette(&mut pixels.clone(), iterations).ok_or(
-        String::from("There was a problem building the palette.")
-    );
-    palette
-}
-
-fn name_from_rgb(colors: &Vec<Color>) {
-    let mut palette = Vec::new();
-    for color in colors {
-        palette.push(HexColor::rgb(color.r, color.g, color.b));
-    }
-    for color in palette {
-        println!("{}", color);
-    }
-}
-
-fn create_image(output_file: String, colors: Vec<Color>) {
-    let square_size: u32 = 50;
-    let width = square_size * (colors.len() as u32);
-    let height = square_size;
-
-    // Create a new image with the specified width and height
-    let mut img: RgbaImage = ImageBuffer::new(width, height);
-
-    // Iterate over the colors and fill each square in the image with a color from the palette
-    for (i, color) in colors.iter().enumerate() {
-        for x in 0..square_size {
-            for y in 0..square_size {
-                let pixel = img.get_pixel_mut((i as u32) * square_size + x, y);
-                *pixel = Rgba([color.r, color.g, color.b, color.a]);
-            }
-        }
-    }
-
-    // Save the output image
-    img.save(output_file).unwrap();
-}
-
-fn main() {
-    let input_file = String::from(
-        "/Users/bendigiorgio/Documents/Programming/_RUST/image-to-palette/src/test.png"
-    );
-    let output_file = String::from("./output.png");
-    let input_url = String::from(
-        "https://cdn.midjourney.com/d04e1165-c3a9-4983-8513-e25e2fdba946/0_0.png"
-    );
-
-    let result = handle_file(input_file, 4);
     if let Err(error) = result {
         println!("{}", error);
     } else {
-        println!("HEX code for colors from local image");
-        name_from_rgb(result.as_ref().unwrap());
-        create_image(output_file, result.unwrap());
-        println!("Success!");
-    }
-
-    let result = handle_file_from_url(input_url, 4);
-    if let Err(error) = result {
-        println!("{}", error);
-    } else {
-        println!("HEX code for colors from URL");
-        name_from_rgb(result.as_ref().unwrap());
+        println!("HEX code for colors from local image:");
+        image_tools::name_from_rgb(result.as_ref().unwrap());
         println!("Success!");
     }
 }
+
+#[launch]
+fn rocket() -> _ {
+    rocket::build().mount("/", routes![palette_from_url]).mount("/", routes![palette_from_image])
+}
+
+// fn main() {
+//     let input_file = String::from(
+//         "/Users/bendigiorgio/Documents/Programming/_RUST/image-to-palette/src/test.png"
+//     );
+//     let output_file = String::from("./output.png");
+//     let input_url = String::from(
+//         "https://cdn.midjourney.com/d04e1165-c3a9-4983-8513-e25e2fdba946/0_0.png"
+//     );
+
+//     let result = image_tools::handle_file(input_file, 4);
+//     if let Err(error) = result {
+//         println!("{}", error);
+//     } else {
+//         println!("HEX code for colors from local image:");
+//         image_tools::name_from_rgb(result.as_ref().unwrap());
+//         image_tools::create_image(output_file, result.unwrap());
+//         println!("Success!");
+//     }
+
+//     let result = image_tools::handle_file_from_url(input_url, 4);
+//     if let Err(error) = result {
+//         println!("{}", error);
+//     } else {
+//         println!("HEX code for colors from URL:");
+//         image_tools::name_from_rgb(result.as_ref().unwrap());
+//         println!("Success!");
+//     }
+// }
