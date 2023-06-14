@@ -1,10 +1,15 @@
 mod image_tools;
 #[macro_use]
 extern crate rocket;
-use rocket::http::Status;
+
+use std::fs;
+use std::time::Duration;
+
+use rocket::http::{ Status };
 use rocket::response::status;
 use rocket::serde::{ Serialize, Deserialize, json::Json };
-use rocket::fs::TempFile;
+use rocket::fs::{ TempFile, NamedFile };
+use tokio::{ task, time };
 
 #[derive(Deserialize)]
 #[serde(crate = "rocket::serde")]
@@ -68,9 +73,47 @@ fn palette_from_image(file: TempFile<'_>, iterations: u8) {
     }
 }
 
+#[post("/make_palette_image?<id>", data = "<url>")]
+async fn make_palette_image_from_url(
+    url: Json<Url<'_>>,
+    id: String
+) -> Result<Option<NamedFile>, status::Custom<String>> {
+    let result = image_tools::handle_file_from_url(url.link.to_string(), url.iterations).await;
+    let result = match result {
+        Some(result) => result,
+        None => {
+            return Err(
+                status::Custom(Status::InternalServerError, format!("Internal Server Error"))
+            );
+        }
+    };
+    if let Err(error) = result {
+        println!("{}", error);
+        return Err(status::Custom(Status::InternalServerError, format!("{}", error)));
+    } else {
+        let output_file = format!("./output/{}.png", id);
+        image_tools::create_image(&output_file, result.unwrap());
+
+        // Remove file after 45 seconds
+        task::spawn(async move {
+            time::sleep(Duration::from_secs(45)).await;
+            fs::remove_file(format!("./output/{}.png", id)).ok();
+        });
+
+        Some(NamedFile::open(output_file).await.ok()).ok_or(
+            status::Custom(
+                rocket::http::Status::InternalServerError,
+                "Internal Server Error".to_string()
+            )
+        )
+    }
+}
+
 #[launch]
 fn rocket() -> _ {
-    rocket::build().mount("/", routes![palette_from_url]).mount("/", routes![palette_from_image])
+    rocket
+        ::build()
+        .mount("/", routes![palette_from_url, make_palette_image_from_url, palette_from_image])
 }
 
 // fn main() {
