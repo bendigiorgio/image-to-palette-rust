@@ -1,4 +1,4 @@
-use image::{ Rgba, RgbaImage, ImageBuffer };
+use image::{ Rgba, RgbaImage, ImageBuffer, DynamicImage };
 use image::error::ImageResult as ImageResult;
 use image::io::Reader as ImageReader;
 use hex_color::HexColor;
@@ -166,14 +166,12 @@ fn _assign_colors(colors: Vec<Color>, palette: Vec<Color>) -> Vec<Color> {
                             .map(|channel| channel_distance(channel.value(c), channel.value(p)))
                             .sum::<u32>()
                     )
-                    .unwrap() // Maybe we should check if the palette is empty?
+                    .unwrap() //TODO check if the palette is empty?
         )
     );
     result
 }
 
-/// Convert from the local representation to an image::RgbaImage.
-/// Could theoretically panic in a variety of ways.
 fn _gather_pixels(colors: Vec<Color>, width: u32, height: u32) -> RgbaImage {
     let from_c = |c: Color| Rgba::<u8>::from([c.r, c.g, c.b, c.a]);
     RgbaImage::from_fn(width, height, |x, y|
@@ -257,7 +255,7 @@ pub fn name_from_rgb(colors: &Vec<Color>) -> Vec<HexColor> {
     palette
 }
 
-pub fn create_image(output_file: String, colors: Vec<Color>) {
+pub fn create_image(output_file: &str, colors: Vec<Color>) {
     let square_size: u32 = 50;
     let width = square_size * (colors.len() as u32);
     let height = square_size;
@@ -276,5 +274,29 @@ pub fn create_image(output_file: String, colors: Vec<Color>) {
     }
 
     // Save the output image
+    if !std::path::Path::new("./output/").exists() {
+        std::fs::create_dir("./output/").ok();
+    }
+
     img.save(output_file).unwrap();
 }
+
+// pub fn create_image_file(colors: Vec<Color>) -> DynamicImage {
+//     let square_size: u32 = 50;
+//     let width = square_size * (colors.len() as u32);
+//     let height = square_size;
+
+//     // Create a new image with the specified width and height
+//     let mut img: RgbaImage = ImageBuffer::new(width, height);
+
+//     // Iterate over the colors and fill each square in the image with a color from the palette
+//     for (i, color) in colors.iter().enumerate() {
+//         for x in 0..square_size {
+//             for y in 0..square_size {
+//                 let pixel = img.get_pixel_mut((i as u32) * square_size + x, y);
+//                 *pixel = Rgba([color.r, color.g, color.b, color.a]);
+//             }
+//         }
+//     }
+//     image::DynamicImage::ImageRgba8(img)
+// }
