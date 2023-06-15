@@ -32,6 +32,31 @@ There are two endpoints you can use:
   ```
 
 - Description: This endpoint will download the image from the provided URL, generate a color palette, and return the palette as a JSON array of hexadecimal color values.
+- Example output (200 response):
+```json
+{
+    "colors": [
+        "#C9B380",
+        "#EFB335",
+        "#C96C3C",
+        "#866354",
+        "#446777",
+        "#4B4D4E",
+        "#3E3236",
+        "#1E2A3D",
+        "#EC841C",
+        "#C45B19",
+        "#C32B14",
+        "#862614",
+        "#45231A",
+        "#221C1C",
+        "#2E100E",
+        "#151010"
+    ]
+}
+```
+
+***
 
 ### Endpoint 2: /palette_from_image
 
@@ -44,6 +69,8 @@ There are two endpoints you can use:
   ```
 
 - Description: This endpoint will read the uploaded image file, generate a color palette, and returns a named file which is deleted after 45 seconds.
+- Example output:
+![Example Output](https://github.com/bendigiorgio/image-to-palette-rust/blob/master/output.png?raw=true)
 
 ## Note
 
@@ -53,6 +80,8 @@ For example, if you provide "iterations" as 4, the number of colors in the palet
 
 ## Limitations
 
-This program does not yet handle all potential error conditions. Also, it does not provide extensive customization for color palette creation. It is a simple application for extracting dominant colors from an image.
+This program does not yet handle all potential error conditions. Also, it does not provide extensive customization for color palette creation.
+It is a simple application for extracting dominant colors from an image.
+There's some more features coming up but for now...
 
-Enjoy creating beautiful palettes!
+### Enjoy creating beautiful palettes!
