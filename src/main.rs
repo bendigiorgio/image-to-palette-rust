@@ -35,6 +35,7 @@ async fn palette_from_url(
             );
         }
     };
+
     if let Err(error) = result {
         println!("{}", error);
         return Err(status::Custom(Status::InternalServerError, format!("{}", error)));

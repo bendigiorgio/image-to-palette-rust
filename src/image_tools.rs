@@ -123,7 +123,6 @@ fn median_cut(colors: &mut Vec<Color>) -> Option<(Vec<Color>, Vec<Color>)> {
 
 /// Perform the median cut algorithm.
 /// Returns a palette with 2^iter_count colors.
-/// https://en.wikipedia.org/wiki/Median_cut
 pub fn make_palette(bucket: &mut Vec<Color>, iter_count: u8) -> Option<Vec<Color>> {
     if iter_count < 1 {
         return Some(vec![Color::from_fn(|channel| channel_mean(bucket, &channel))?]);
