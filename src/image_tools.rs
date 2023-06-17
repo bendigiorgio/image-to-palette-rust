@@ -3,9 +3,9 @@ use image::error::ImageResult as ImageResult;
 use image::io::Reader as ImageReader;
 use hex_color::HexColor;
 use anyhow::Result;
-use rocket::futures::TryFutureExt;
-use rocket::http::hyper::body::Buf;
-use std::io::{ copy, Cursor };
+// use rocket::futures::TryFutureExt;
+// use rocket::http::hyper::body::Buf;
+// use std::io::{ copy, Cursor };
 #[derive(Debug, Clone, Copy)]
 pub struct Color {
     pub r: u8,
@@ -231,7 +231,7 @@ pub async fn handle_file_from_url(
     let image = image::load_from_memory(&content);
     let image = match image {
         Ok(image) => image,
-        Err(e) => {
+        Err(_e) => {
             return Some(Err("Could not load image from url".to_string()));
         }
     };

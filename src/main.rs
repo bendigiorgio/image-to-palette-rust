@@ -4,11 +4,13 @@ extern crate rocket;
 
 use std::fs;
 use std::time::Duration;
-
-use rocket::http::{ Status };
+use rocket::fairing::{ Fairing, Info, Kind };
+use rocket::fs::{ NamedFile, TempFile };
+use rocket::http::{ Header, Method, Status };
+use rocket::{ Request, Response };
 use rocket::response::status;
-use rocket::serde::{ Serialize, Deserialize, json::Json };
-use rocket::fs::{ TempFile, NamedFile };
+use rocket::serde::{ json::Json, Deserialize, Serialize };
+
 use tokio::{ task, time };
 
 #[derive(Deserialize)]
@@ -20,6 +22,30 @@ struct Url<'r> {
 #[derive(Serialize)]
 struct PaletteResponse {
     colors: Vec<String>,
+}
+
+pub struct CORS;
+#[rocket::async_trait]
+impl Fairing for CORS {
+    fn info(&self) -> Info {
+        Info {
+            name: "Add CORS headers to responses",
+            kind: Kind::Response,
+        }
+    }
+
+    async fn on_response<'r>(&self, request: &'r Request<'_>, response: &mut Response<'r>) {
+        if request.method() == Method::Options {
+            response.set_status(Status::NoContent);
+            response.set_header(
+                Header::new("Access-Control-Allow-Methods", "POST, PATCH, GET, DELETE")
+            );
+            response.set_header(Header::new("Access-Control-Allow-Headers", "*"));
+        }
+
+        response.set_header(Header::new("Access-Control-Allow-Origin", "http://localhost:3000"));
+        response.set_header(Header::new("Access-Control-Allow-Credentials", "true"));
+    }
 }
 
 #[post("/make_palette", data = "<url>")]
@@ -114,6 +140,7 @@ async fn make_palette_image_from_url(
 fn rocket() -> _ {
     rocket
         ::build()
+        .attach(CORS)
         .mount("/", routes![palette_from_url, make_palette_image_from_url, palette_from_image])
 }
 
