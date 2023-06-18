@@ -22,6 +22,7 @@ struct Url<'r> {
 #[derive(Serialize)]
 struct PaletteResponse {
     colors: Vec<String>,
+    internal_time: u128,
 }
 
 pub struct CORS;
@@ -52,6 +53,7 @@ impl Fairing for CORS {
 async fn palette_from_url(
     url: Json<Url<'_>>
 ) -> Result<Json<PaletteResponse>, status::Custom<String>> {
+    let start_time = time::Instant::now();
     let result = image_tools::handle_file_from_url(url.link.to_string(), url.iterations).await;
     let result = match result {
         Some(result) => result,
@@ -75,6 +77,7 @@ async fn palette_from_url(
                     .iter()
                     .map(|color| color.to_string())
                     .collect(),
+                internal_time: start_time.elapsed().as_millis(),
             })
         ).ok_or(
             status::Custom(
